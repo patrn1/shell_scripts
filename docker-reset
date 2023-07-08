@@ -1,0 +1,7 @@
+#!/bin/bash
+docker rm -vf $(docker ps -aq);
+docker rmi -f $(docker images -aq);
+docker volume prune -f;
+docker network prune -f;
+docker image prune -a -f;
+docker system prune -f -a --volumes;

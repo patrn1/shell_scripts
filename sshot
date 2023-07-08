@@ -1,0 +1,2 @@
+#!/bin/bash
+delay=2; file=/tmp/$(date +%s).png; scrot -u -d $delay $file ; sleep 1; firefox $file;
