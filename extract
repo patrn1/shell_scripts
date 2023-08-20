@@ -4,6 +4,9 @@ for plik in $@; do
      if ( file $plik | grep -i 'zip');
           then 
             unzip $plik
+          elif ( file $plik | grep -i 'rar');
+          then
+            unrar -x $plik
           elif ( file $plik | grep -i 'tar');
           then 
             tar -xvjf $plik
