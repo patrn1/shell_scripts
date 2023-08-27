@@ -1,0 +1,3 @@
+#!/bin/bash
+docker-clear;
+rm -rf /home/*/.npm/_cacache/*;
