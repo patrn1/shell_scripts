@@ -1,3 +1,5 @@
 #!/bin/bash
 name=${1:-''}
 docker container stop $(docker ps -q --all --filter "name=${name}");
+service docker stop;
+systemctl disable docker;
