@@ -28,6 +28,7 @@ for plik in $@; do
                *.gz)      gunzip $plik ;;
                *.zip)     unzip $plik ;;
                *.7z)      7z x $plik ;;
+               *.xz)      tar -xf $plik ;;
                *)         echo "Cannot unpack it !";
             esac;
      fi
