@@ -1,0 +1,4 @@
+#!/bin/bash
+
+rfkill unblock wifi;
+service iwd restart;
