@@ -1,4 +1,4 @@
 #!/bin/bash
 git config core.fileMode false
-echo *.tmp.* >> .git/info/exclude
+echo "*.tmp.*" >> .git/info/exclude
 echo .htaccess >> .git/info/exclude
