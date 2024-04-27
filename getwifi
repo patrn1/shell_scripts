@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+# https://www.reddit.com/r/archlinux/comments/q6nb4q/comment/hh919v0/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button
+
+state=$(iwctl station wlan0 show | grep "^\s*State" | awk '{print $2}')
+ssid=$(iwctl station wlan0 show | grep 'Connected network' | sed 's/\ *Connected network\ *//;s/[ ]*$//')
+
+disconnect() {
+    iwctl station wlan0 disconnect
+}
+
+connect() {
+    if [[ -n "$1" ]]
+    then
+              # terminal needed to input password
+        xterm -e "iwctl station wlan0 connect $1" 
+
+    else
+        iwctl station wlan0 connect "$ssid"
+    fi
+}
+
+select_network() {
+    iwctl station wlan0 scan
+    selection=$(iwctl station wlan0 get-networks \
+        | tail -n +5 \
+        | head -n -1 \
+        | sed -e "s:\[1;30m::g" \
+        | sed -e "s:\[0m::g" \
+        | sed -e "s:\*\x1b.*:\*:g" \
+        | sed -e "s:\x1b::g" \
+        | dmenu -l 10)
+    #read selection _ <<< "$selection" #Keep only first column
+    selection="$(echo $selection | sed 's/ *psk.*//')"
+    if [[ -n "'$selection'" ]]
+    then
+        if [[ "'$selection'" == ">" ]] # selected current connected network
+        then
+            response=$(printf "Back\nReconnect\nDisconnect\n" | dmenu -l 3 -p "'$ssid'" -n 1)
+            case "$response" in
+                "Back")
+                    select_network
+                    ;;
+                "Reconnect")
+                    disconnect
+                    connect
+                    ;;
+                "Disconnect")
+                    disconnect
+                    ;;
+            esac
+        else
+            response=$(printf "Back\nConnect\n" | dmenu -l 2 -p "'$selection'")
+            case "$response" in
+                "Back")
+                    select_network
+                    ;;
+                "Connect")
+                    echo "###'$selection'###"
+                    # connect "$(echo $selection | sed 's/ /\\ /')"
+                    connect "'$selection'"
+                    ;;
+            esac
+        fi
+    fi
+
+    echo $(iwctl station wlan0 show | grep 'Connected network')
+}
+
+select_network
