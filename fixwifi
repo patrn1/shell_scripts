@@ -2,3 +2,4 @@
 
 rfkill unblock wifi;
 service iwd restart;
+service network-manager restart;
