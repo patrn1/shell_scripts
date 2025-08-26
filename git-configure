@@ -1,4 +1,5 @@
 #!/bin/bash
 git config core.fileMode false
+git config --global --add safe.directory '*'
 echo "*.tmp.*" >> .git/info/exclude
 echo .htaccess >> .git/info/exclude
