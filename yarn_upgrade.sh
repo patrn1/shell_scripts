@@ -5,6 +5,8 @@
 # Global array to track processed service-folder combinations
 declare -A PROCESSED_COMBINATIONS
 
+git_configure_path=$(command -v git-configure)
+
 # Function to extract package name from package.json
 extract_package_name() {
     local folder="$1"
@@ -48,7 +50,7 @@ process_service() {
         
         echo "=========================="
         
-        echo "Processing folder: $folder"
+        echo "# Processing folder: $folder"
         
         echo "=========================="
         
@@ -67,8 +69,25 @@ process_service() {
         # Run git commands
         echo "Running git commands..."
 
-        # git-configure
-        # git push
+        git add ./yarn.lock
+        git commit -m "UPG ${service_name}"
+
+        if [ -n "$git_configure_path" ]; then
+        
+            $git_configure_path;
+
+        fi
+
+        ####### TODO:
+        ####### git push
+
+        echo "# FINISHED ${service_name} FROM ${folder}"
+
+        if [ -n  "$(git status | grep yarn.lock)" ]; then
+
+            sleep 20;
+
+        fi
         
         # Extract package name from current folder's package.json
         local next_service=$(extract_package_name ".")
