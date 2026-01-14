@@ -6,6 +6,7 @@
 declare -A PROCESSED_COMBINATIONS
 
 git_configure_path=$(command -v git-configure)
+current_dir=$(pwd)
 
 # Function to extract package name from package.json
 extract_package_name() {
@@ -21,7 +22,9 @@ extract_package_name() {
 # Function to process a service
 process_service() {
     local service_name="$1"
-    local current_dir=$(pwd)
+    # local current_dir=$(pwd)
+
+    cd "$current_dir"
     
     echo "Processing service: $service_name"
     
@@ -47,18 +50,25 @@ process_service() {
             echo "Already processed $service_name in $folder. Skipping..."
             continue
         fi
-        
+
         echo "=========================="
         
         echo "# Processing folder: $folder"
         
         echo "=========================="
         
-        # Mark this combination as processed
-        PROCESSED_COMBINATIONS["$combination_key"]=1
-        
         # Navigate to the folder
         cd "$folder" || { echo "Failed to navigate to $folder"; continue; }
+
+        # Extract package name from current folder's package.json
+        local next_service=$(extract_package_name ".")
+
+        if [ "$service_name" = "$next_service" ]; then
+
+            echo "Skipping ${service_name} = ${next_service}"
+
+            continue
+        fi
 
         git config --global --add safe.directory "$(pwd)";
         
@@ -69,6 +79,8 @@ process_service() {
         # Run git commands
         echo "Running git commands..."
 
+        has_yarn_update="$(git status | grep yarn.lock)"
+
         git add ./yarn.lock
         git commit -m "UPG ${service_name}"
 
@@ -78,32 +90,45 @@ process_service() {
 
         fi
 
+        if [ -z "$has_yarn_update" ]; then
+        
+            # Mark this combination as processed
+            PROCESSED_COMBINATIONS["$combination_key"]=1
+
+        fi
+
         ####### TODO:
         ####### git push
 
-        echo "# FINISHED ${service_name} FROM ${folder}"
+        finish_msg="# FINISHED ${service_name} FROM ${folder}"
 
-        if [ -n  "$(git status | grep yarn.lock)" ]; then
+        echo "${finish_msg}"
 
-            sleep 20;
+        if [ -n "$has_yarn_update"  ]; then
 
-        fi
-        
-        # Extract package name from current folder's package.json
-        local next_service=$(extract_package_name ".")
-        
-        # If we have a package name, recursively process it
-        if [ -n "$next_service" ]; then
-            # Check if we're about to create a cycle
-            local next_key="${next_service}|${folder}"
-            if [[ ${PROCESSED_COMBINATIONS[$next_key]} ]]; then
-                echo "Cycle detected: $next_service in $folder already processed. Stopping recursion."
+            for ((i=20; i>=1; i--)); do
+                printf "DO GIT PUSH AT ${folder}: \r%d " "$i"
+                sleep 1
+            done
+            printf "\n"
+
+            ################################
+            ################################
+            
+            # If we have a package name, recursively process it
+            if [ -n "$next_service" ]; then
+                # Check if we're about to create a cycle
+                local next_key="${next_service}|${folder}"
+                if [[ ${PROCESSED_COMBINATIONS[$next_key]} ]]; then
+                    echo "Cycle detected: $next_service in $folder already processed. Stopping recursion."
+                else
+                    echo "Moving to next service: $next_service"
+                    process_service "$next_service"
+                fi
             else
-                echo "Moving to next service: $next_service"
-                process_service "$next_service"
+                echo "No package name found in $folder/package.json"
             fi
-        else
-            echo "No package name found in $folder/package.json"
+
         fi
         
         # Return to original directory
