@@ -25,7 +25,7 @@ process_service() {
     
     # Find all folders containing the service in package.json
     local folders
-    mapfile -t folders < <(grep -rli "\"$service_name\"" ../*/package.json 2>/dev/null)
+    mapfile -t folders < <(grep -rli "\"$service_name\"" ./*/package.json 2>/dev/null)
     
     if [ ${#folders[@]} -eq 0 ]; then
         echo "No dependencies found for $service_name"
@@ -46,13 +46,19 @@ process_service() {
             continue
         fi
         
+        echo "=========================="
+        
         echo "Processing folder: $folder"
+        
+        echo "=========================="
         
         # Mark this combination as processed
         PROCESSED_COMBINATIONS["$combination_key"]=1
         
         # Navigate to the folder
         cd "$folder" || { echo "Failed to navigate to $folder"; continue; }
+
+        git config --global --add safe.directory "$(pwd)";
         
         # Upgrade the package
         echo "Running: yarn upgrade $service_name"
@@ -60,7 +66,7 @@ process_service() {
         
         # Run git commands
         echo "Running git commands..."
-        git-configure
+
         git push
         
         # Extract package name from current folder's package.json
