@@ -24,6 +24,9 @@ process_service() {
     local service_name="$1"
     # local current_dir=$(pwd)
 
+    service_name=${service_name#./}
+    service_name=${service_name%/}
+
     cd "$current_dir"
     
     echo "Processing service: $service_name"
@@ -56,9 +59,12 @@ process_service() {
         echo "# Processing folder: $folder"
         
         echo "=========================="
+
+        # echo "FOLDER: [$folder]"
+        # echo "CURRENT DIR: [$current_dir]"
         
         # Navigate to the folder
-        cd "$folder" || { echo "Failed to navigate to $folder"; continue; }
+        cd "${current_dir}/${folder}" || { echo "Failed to navigate to $folder"; continue; }
 
         # Extract package name from current folder's package.json
         local next_service=$(extract_package_name ".")
@@ -84,16 +90,34 @@ process_service() {
             fi
         done
 
+        if [ ! -f "./.yarnrc.yml" ]; then
+            # YARN configure
+            yarn set version berry
+            echo "nodeLinker: node-modules" > .yarnrc.yml
+        fi
+
         # THEN upgrade the target service
         echo "Running: yarn upgrade $service_name"
-        yarn upgrade "$service_name"
+        package_not_found="$(yarn upgrade \"$service_name\" | grep 't seem to be present in your lockfile')"
+
+        if [ -n "$package_not_found" ]; then
+        
+            yarn install;
+
+        fi
 
         # Run git commands
         echo "Running git commands..."
 
-        has_yarn_update="$(git status | grep yarn.lock)"
+        git restore --staged . 
 
+        has_yarn_update="$(git status | grep yarn.lock)"
+        has_package_update="$(git status | grep package.json)"
+
+        git add ./.yarn
         git add ./yarn.lock
+        git add ./package.json
+        git add ./.yarnrc.yml
         git commit -m "UPG ${service_name}"
 
         if [ -n "$git_configure_path" ]; then
@@ -116,7 +140,7 @@ process_service() {
 
         echo "${finish_msg}"
 
-        if [ -n "$has_yarn_update"  ]; then
+        if [[ -n "$has_yarn_update" || -n "$has_package_update" ]]; then
 
             ################################
 
