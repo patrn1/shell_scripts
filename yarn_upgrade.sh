@@ -72,10 +72,22 @@ process_service() {
 
         git config --global --add safe.directory "$(pwd)";
         
-        # Upgrade the package
+        # FIRST: process local dependencies
+        local deps
+        mapfile -t deps < <(extract_local_dependencies)
+
+        for dep in "${deps[@]}"; do
+            # Only recurse if it's a local package
+            if [ -f "../$dep/package.json" ] || [ -f "./$dep/package.json" ]; then
+                echo "Ensuring dependency $dep is upgraded before $next_service"
+                process_service "$dep"
+            fi
+        done
+
+        # THEN upgrade the target service
         echo "Running: yarn upgrade $service_name"
         yarn upgrade "$service_name"
-        
+
         # Run git commands
         echo "Running git commands..."
 
@@ -100,19 +112,24 @@ process_service() {
         ####### TODO:
         ####### git push
 
-        finish_msg="# FINISHED ${service_name} FROM ${folder}"
+        finish_msg="# UPGRADED ${service_name} AT ${folder}"
 
         echo "${finish_msg}"
 
         if [ -n "$has_yarn_update"  ]; then
 
-            for ((i=20; i>=1; i--)); do
-                printf "DO GIT PUSH AT ${folder}: \r%d " "$i"
-                sleep 1
-            done
-            printf "\n"
+            ################################
+
+            # for ((i=20; i>=1; i--)); do
+            #     printf "DO GIT PUSH AT ${folder}: \r%d " "$i"
+            #     sleep 1
+            # done
+            # printf "\n"
 
             ################################
+
+            read -r -p "Press Enter to continue..."
+
             ################################
             
             # If we have a package name, recursively process it
@@ -129,11 +146,21 @@ process_service() {
                 echo "No package name found in $folder/package.json"
             fi
 
+            ################################
+
         fi
         
         # Return to original directory
         cd "$current_dir" || exit 1
     done
+}
+
+# Extract local dependencies (names only)
+extract_local_dependencies() {
+    jq -r '
+      (.dependencies // {} + .devDependencies // {})
+      | keys[]
+    ' package.json 2>/dev/null
 }
 
 # Main execution
