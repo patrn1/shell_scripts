@@ -67,7 +67,8 @@ process_service() {
         # Run git commands
         echo "Running git commands..."
 
-        git push
+        # git-configure
+        # git push
         
         # Extract package name from current folder's package.json
         local next_service=$(extract_package_name ".")
