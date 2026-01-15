@@ -1,210 +1,146 @@
 #!/bin/bash
-
-# Script to recursively upgrade npm packages and push changes
-
-# Global array to track processed service-folder combinations
-declare -A PROCESSED_COMBINATIONS
-
+# set -e
+#
+###############################################################
+# NPM/Yarn recursive upgrader
+# Usage: ./upgrade_packages.sh <package_name_without_scope>
+# Example: ./upgrade_packages.sh my-utils
+#
+###############################################################
+TARGET_ARG=$1
+if [ -z "$TARGET_ARG" ]; then
+echo "Error: Please provide a package name (without vendor/scope)."
+echo "Usage: $0 <package_name>"
+exit 1
+fi
+# Check for jq
+echo "JQ # 222"
+if ! command -v jq &> /dev/null; then
+echo "Error: 'jq' is not installed. Please install it to use this script."
+exit 1
+fi
+# Root directory is the current directory
+ROOT_DIR=$(pwd)
 git_configure_path=$(command -v git-configure)
-current_dir=$(pwd)
-
-# Function to extract package name from package.json
-extract_package_name() {
-    local folder="$1"
-    if [ -f "$folder/package.json" ]; then
-        package_name=$(grep -o '"name": *"[^"]*"' "$folder/package.json" | head -1 | cut -d'"' -f4)
-        echo "$package_name"
-    else
-        echo ""
-    fi
+# Array to keep track of packages we have already updated in this run
+# to prevent infinite recursion loops.
+declare -a UPDATED_PACKAGES=()
+# Function to check if array contains element
+containsElement() {
+    local e match="$1"
+    shift
+    for e; do [[ "$e" == "$match" ]] && return 0; done
+    return 1
 }
-
-# Function to process a service
-process_service() {
-    local service_name="$1"
-    # local current_dir=$(pwd)
-
-    service_name=${service_name#./}
-    service_name=${service_name%/}
-
-    cd "$current_dir"
-    
-    echo "Processing service: $service_name"
-    
-    # Find all folders containing the service in package.json
-    local folders
-    mapfile -t folders < <(grep -rli "\"$service_name\"" ./*/package.json 2>/dev/null)
-    
-    if [ ${#folders[@]} -eq 0 ]; then
-        echo "No dependencies found for $service_name"
-        return 0
+upgrade_recursive() {
+    local target_short_name=$1
+    echo "---------------------------------------------------------"
+    echo " Looking for local packages depending on: '$target_short_name'..."
+    # Iterate over all directories in the root folder
+    for dir in "$ROOT_DIR"/*/; do
+    # Remove trailing slash
+    dir=${dir%*/}
+    # Get just the folder name
+    dirname=${dir##*/}
+    local package_json="$dir/package.json"
+    # Check if package.json exists
+    if [ ! -f "$package_json" ]; then
+    continue
     fi
-    
-    # Process each folder
-    for folder_path in "${folders[@]}"; do
-        # Convert to directory path
-        folder=$(dirname "$folder_path")
-        
-        # Create unique key for service-folder combination
-        local combination_key="${service_name}|${folder}"
-        
-        # Check if we've already processed this combination
-        if [[ ${PROCESSED_COMBINATIONS[$combination_key]} ]]; then
-            echo "Already processed $service_name in $folder. Skipping..."
-            continue
-        fi
+    # 1. Identify if this package depends on the target
+    # We look for exact match OR match ending in /target_name (to handle @scope/name)
+    # We extract the Full Key (e.g., @myorg/aaa) and the URL value
+    echo "JQ # 444"
+    dependency_info=$(jq -r --arg target "$target_short_name" '
+    .dependencies // empty | to_entries[] |
+    select(.key == $target or (.key | tostring | endswith("/" + $target))) |
+    "\(.key)|\(.value)"
+    ' "$package_json")
+    # If dependency_info is not empty, we found a match
+    if [ ! -z "$dependency_info" ]; then
+    # Split the info into Name and URL
+    full_dep_name=$(echo "$dependency_info" | cut -d'|' -f1)
+    dep_url=$(echo "$dependency_info" | cut -d'|' -f2)
+    # Get the name of the CURRENT package (the one we are about to update)
+    echo "JQ # 111"
+    current_pkg_name=$(jq -r '.name' "$package_json")
+    # Check if we already processed this specific package to avoid loops
+    if containsElement "$current_pkg_name" "${UPDATED_PACKAGES[@]}"; then
+    echo " Skipping $dirname (already updated in this chain)."
+    continue
+    fi
+    echo " Found dependent: $dirname ($current_pkg_name)"
+    echo " -> Depends on: $full_dep_name"
+    echo " -> Update Source: $dep_url"
+    # 2. Perform the Upgrade
+    # We use a subshell (parentheses) so directory changes don't affect the main loop
+    (
+    cd "$dir" || exit
 
-        echo "=========================="
-        
-        echo "# Processing folder: $folder"
-        
-        echo "=========================="
+    if [ ! -f "./.yarnrc.yml" ]; then
+        yarn set version berry
+        echo "nodeLinker: node-modules" > .yarnrc.yml
+    fi
 
-        # echo "FOLDER: [$folder]"
-        # echo "CURRENT DIR: [$current_dir]"
-        
-        # Navigate to the folder
-        cd "${current_dir}/${folder}" || { echo "Failed to navigate to $folder"; continue; }
+    echo " Executing yarn up in $dirname..."
 
-        # Extract package name from current folder's package.json
-        local next_service=$(extract_package_name ".")
+    git restore --staged .
 
-        if [ "$service_name" = "$next_service" ]; then
+    # Yarn 2 Up command
+    ############ yarn up "${full_dep_name}@${dep_url}"
 
-            echo "Skipping ${service_name} = ${next_service}"
+    yarn_up_log="$(yarn up ${full_dep_name}@${dep_url})"
 
-            continue
-        fi
+    echo "yarn_up_log" "$yarn_up_log"
 
-        git config --global --add safe.directory "$(pwd)";
-        
-        # FIRST: process local dependencies
-        local deps
-        mapfile -t deps < <(extract_local_dependencies)
+    package_not_found="$(echo $yarn_up_log | grep 't seem to be present in your lockfile')"
 
-        for dep in "${deps[@]}"; do
-            # Only recurse if it's a local package
-            if [ -f "../$dep/package.json" ] || [ -f "./$dep/package.json" ]; then
-                echo "Ensuring dependency $dep is upgraded before $next_service"
-                process_service "$dep"
-            fi
-        done
+    if [ -n "$package_not_found" ]; then
 
-        if [ ! -f "./.yarnrc.yml" ]; then
-            # YARN configure
-            yarn set version berry
-            echo "nodeLinker: node-modules" > .yarnrc.yml
-        fi
+        yarn install;
 
-        # THEN upgrade the target service
-        echo "Running: yarn upgrade $service_name"
-        package_not_found="$(yarn upgrade \"$service_name\" | grep 't seem to be present in your lockfile')"
+    fi 
 
-        if [ -n "$package_not_found" ]; then
-        
-            yarn install;
+    has_yarn_update="$(git status | grep yarn.lock)"
+    has_package_update="$(git status | grep package.json)"
 
-        fi
+    git add ./.yarn
+    git add ./yarn.lock
+    git add ./package.json
+    git add ./.yarnrc.yml
 
-        # Run git commands
-        echo "Running git commands..."
+    branch_is_ahead="$(git commit -m "UPG ${service_name}" 2>&1 | grep 'Your branch is ahead of' | tr -d '\n')"
 
-        git restore --staged . 
+    if [ -n "$git_configure_path" ]; then
 
-        has_yarn_update="$(git status | grep yarn.lock)"
-        has_package_update="$(git status | grep package.json)"
+        $git_configure_path;
 
-        git add ./.yarn
-        git add ./yarn.lock
-        git add ./package.json
-        git add ./.yarnrc.yml
-        git commit -m "UPG ${service_name}"
+    fi
 
-        if [ -n "$git_configure_path" ]; then
-        
-            $git_configure_path;
+    if [[ -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]; then
 
-        fi
+        echo "Do GIT PUSH @ ${dirname}"
 
-        if [ -z "$has_yarn_update" ]; then
-        
-            # Mark this combination as processed
-            PROCESSED_COMBINATIONS["$combination_key"]=1
+        read -r -p "Press Enter to continue..."
 
-        fi
+    fi
 
-        ####### TODO:
-        ####### git push
+    )
 
-        finish_msg="# UPGRADED ${service_name} AT ${folder}"
-
-        echo "${finish_msg}"
-
-        if [[ -n "$has_yarn_update" || -n "$has_package_update" ]]; then
-
-            ################################
-
-            # for ((i=20; i>=1; i--)); do
-            #     printf "DO GIT PUSH AT ${folder}: \r%d " "$i"
-            #     sleep 1
-            # done
-            # printf "\n"
-
-            ################################
-
-            read -r -p "Press Enter to continue..."
-
-            ################################
-            
-            # If we have a package name, recursively process it
-            if [ -n "$next_service" ]; then
-                # Check if we're about to create a cycle
-                local next_key="${next_service}|${folder}"
-                if [[ ${PROCESSED_COMBINATIONS[$next_key]} ]]; then
-                    echo "Cycle detected: $next_service in $folder already processed. Stopping recursion."
-                else
-                    echo "Moving to next service: $next_service"
-                    process_service "$next_service"
-                fi
-            else
-                echo "No package name found in $folder/package.json"
-            fi
-
-            ################################
-
-        fi
-        
-        # Return to original directory
-        cd "$current_dir" || exit 1
+    # Mark as updated
+    UPDATED_PACKAGES+=("$current_pkg_name")
+    # 3. Recursive Step
+    # Prepare the next target name.
+    # If current package is @vendor/abc, we pass 'abc' to the next recursion.
+    # Remove scope (everything before and including /)
+    next_target_short_name="${current_pkg_name##*/}"
+    echo " Propagating update downstream for '$next_target_short_name'..."
+    # RECURSIVE CALL
+    upgrade_recursive "$next_target_short_name"
+    fi
     done
 }
-
-# Extract local dependencies (names only)
-extract_local_dependencies() {
-    jq -r '
-      (.dependencies // {} + .devDependencies // {})
-      | keys[]
-    ' package.json 2>/dev/null
-}
-
-# Main execution
-main() {
-    if [ $# -ne 1 ]; then
-        echo "Usage: $0 <npm-package-name>"
-        echo "Example: $0 user_service"
-        exit 1
-    fi
-    
-    local service_name="$1"
-    
-    # Initialize processed combinations
-    PROCESSED_COMBINATIONS=()
-    
-    # Start processing
-    process_service "$service_name"
-    
-    echo "Processing completed!"
-}
-
-# Run main function
-main "$@"
+# Start the process
+upgrade_recursive "$TARGET_ARG"
+echo "---------------------------------------------------------"
+echo " Chain upgrade complete."
