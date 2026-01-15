@@ -64,8 +64,9 @@ upgrade_recursive() {
     # Get the name of the CURRENT package (the one we are about to update)
     echo "JQ # 111"
     current_pkg_name=$(jq -r '.name' "$package_json")
+    updated_packages_key="$full_dep_name|$current_pkg_name"
     # Check if we already processed this specific package to avoid loops
-    if containsElement "$current_pkg_name" "${UPDATED_PACKAGES[@]}"; then
+    if containsElement "$updated_packages_key" "${UPDATED_PACKAGES[@]}"; then
     echo " Skipping $dirname (already updated in this chain)."
     continue
     fi
@@ -109,7 +110,7 @@ upgrade_recursive() {
     git add ./package.json
     git add ./.yarnrc.yml
 
-    branch_is_ahead="$(git commit -m "UPG ${service_name}" 2>&1 | grep 'Your branch is ahead of' | tr -d '\n')"
+    branch_is_ahead="$(git commit -m UPG_${full_dep_name} 2>&1 | grep 'Your branch is ahead of' | tr -d '\n')"
 
     if [ -n "$git_configure_path" ]; then
 
@@ -122,13 +123,15 @@ upgrade_recursive() {
         echo "Do GIT PUSH @ ${dirname}"
 
         read -r -p "Press Enter to continue..."
-
+    else
+        # # Mark as updated
+        UPDATED_PACKAGES+=($updated_packages_key)
     fi
 
     )
 
-    # Mark as updated
-    UPDATED_PACKAGES+=("$current_pkg_name")
+    # # Mark as updated
+    # UPDATED_PACKAGES+=("$current_pkg_name")
     # 3. Recursive Step
     # Prepare the next target name.
     # If current package is @vendor/abc, we pass 'abc' to the next recursion.
