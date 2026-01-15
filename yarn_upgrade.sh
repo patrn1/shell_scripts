@@ -8,23 +8,32 @@
 #
 ###############################################################
 TARGET_ARG=$1
+TARGET_ARG=${TARGET_ARG#./}
+TARGET_ARG=${TARGET_ARG%/}
+
+if [ -z "$(git config --global user.email)" ]; then
+  echo "Error: Please set your email in the Git config."
+  exit 1
+fi
+
 if [ -z "$TARGET_ARG" ]; then
-echo "Error: Please provide a package name (without vendor/scope)."
-echo "Usage: $0 <package_name>"
-exit 1
+  echo "Error: Please provide a package name (without vendor/scope)."
+  echo "Usage: $0 <package_name>"
+  exit 1
 fi
 # Check for jq
 echo "JQ # 222"
 if ! command -v jq &> /dev/null; then
-echo "Error: 'jq' is not installed. Please install it to use this script."
-exit 1
+  echo "Error: 'jq' is not installed. Please install it to use this script."
+  exit 1
 fi
 # Root directory is the current directory
 ROOT_DIR=$(pwd)
 git_configure_path=$(command -v git-configure)
+# has_updates=TRUE
 # Array to keep track of packages we have already updated in this run
 # to prevent infinite recursion loops.
-declare -a UPDATED_PACKAGES=()
+# declare -a UPDATED_PACKAGES=()
 declare -a POSTPONE_UPDATE=()
 # Function to check if array contains element
 containsElement() {
@@ -112,6 +121,15 @@ check_package_refs() {
 }
 upgrade_recursive() {
   local target_short_name=$1
+
+  # if [ -z "$has_updates" ]; then
+
+  #   return 0
+
+  # fi
+
+  # has_updates=
+
   echo "---------------------------------------------------------"
   echo " Looking for local packages depending on: '$target_short_name'..."
   # Iterate over all directories in the root folder
@@ -142,12 +160,12 @@ upgrade_recursive() {
 
     continue_recursion=$(check_package_refs "$current_pkg_name")
 
-    updated_packages_key="$full_dep_name|$current_pkg_name"
+    # updated_packages_key="$full_dep_name|$current_pkg_name"
     # Check if we already processed this specific package to avoid loops
-    if containsElement "$updated_packages_key" "${UPDATED_PACKAGES[@]}"; then
-    echo " Skipping $dirname (already updated in this chain)."
-    continue
-    fi
+    # if containsElement "$updated_packages_key" "${UPDATED_PACKAGES[@]}"; then
+    # echo " Skipping $dirname (already updated in this chain)."
+    # continue
+    # fi
     echo " Found dependent: $dirname ($current_pkg_name)"
     echo " -> Depends on: $full_dep_name"
     echo " -> Update Source: $dep_url"
@@ -196,28 +214,44 @@ upgrade_recursive() {
 
     fi
 
+    has_any_updates() {
+        [[ -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]
+    }
+
     if [[ -z "${continue_recursion//[[:space:]]/}" ]]; then
 
-        POSTPONE_UPDATE+=("$dirname")
+      if has_any_updates; then
 
-      if ! containsElement "$dirname" "${POSTPONED_UPDATE[@]}"; then
-        
-        POSTPONE_UPDATE+=("$dirname")
+        if ! containsElement "$dirname" "${POSTPONE_UPDATE[@]}"; then
+          
+          POSTPONE_UPDATE+=("$dirname")
+
+        fi
 
       fi
 
     else
-        if [[ -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]; then
+        if has_any_updates; then
 
             echo "DEPS $dependency_info" 
 
             wait_for_push "$dirname"
 
-        else
-            # # Mark as updated
-            UPDATED_PACKAGES+=("$updated_packages_key")
+        # else
+        #     # # Mark as updated
+        #     UPDATED_PACKAGES+=("$updated_packages_key")
         fi
     fi
+
+    # if has_any_updates; then
+
+    #   if [ -z "$has_updates" ]; then
+
+    #     has_updates=TRUE
+
+    #   fi
+
+    # fi
 
     popd > /dev/null;
 
@@ -227,10 +261,15 @@ upgrade_recursive() {
     # Prepare the next target name.
     # If current package is @vendor/abc, we pass 'abc' to the next recursion.
     # Remove scope (everything before and including /)
-    next_target_short_name="${current_pkg_name##*/}"
-    echo " Propagating update downstream for '$next_target_short_name'..."
-    # RECURSIVE CALL
-    upgrade_recursive "$next_target_short_name"
+
+    if has_any_updates; then
+
+      next_target_short_name="${current_pkg_name##*/}"
+      echo " Propagating update downstream for '$next_target_short_name'..."
+      # RECURSIVE CALL
+      upgrade_recursive "$next_target_short_name"
+
+    fi
     fi
   done
 }
