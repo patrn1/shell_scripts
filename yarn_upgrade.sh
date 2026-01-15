@@ -25,19 +25,97 @@ git_configure_path=$(command -v git-configure)
 # Array to keep track of packages we have already updated in this run
 # to prevent infinite recursion loops.
 declare -a UPDATED_PACKAGES=()
+declare -a POSTPONE_UPDATE=()
 # Function to check if array contains element
 containsElement() {
-    local e match="$1"
-    shift
-    for e; do [[ "$e" == "$match" ]] && return 0; done
-    return 1
+  local e match="$1"
+  shift
+  for e; do [[ "$e" == "$match" ]] && return 0; done
+  return 1
+}
+wait_for_push() {
+
+  local _dirname=$1
+
+  echo "Do GIT PUSH @ ${_dirname}"
+
+  read -r -p "Press Enter to continue..."
+
+}
+get_package_deps() {
+
+  local _package_name=$1
+
+  for _dir in "$ROOT_DIR"/*/; do
+    # Remove trailing slash
+    _dir=${_dir%*/}
+    # Get just the folder name
+    dirname=${_dir##*/}
+    local _package_json="$_dir/package.json"
+    # Check if package.json exists
+    if [ ! -f "$_package_json" ]; then
+        continue
+    fi
+    current_pkg_name=$(jq -r '.name' "$_package_json")
+
+    if [ "$_package_name" == "$current_pkg_name" ]; then
+        echo $(get_dependencies "$target_short_name" "$_package_json")
+        break
+    fi
+
+  done
+}
+get_dependencies() {
+
+  local _target_short_name=$1
+  local _package_json=$2
+
+  echo $(jq -r --arg target "$_target_short_name" '
+  .dependencies // empty | to_entries[] |
+  select(.key == $target or (.key | tostring | endswith("/" + $target))) |
+  "\(.key)|\(.value)"
+  ' "$_package_json")
+}
+get_package_name() {
+
+  local _package_json=$1
+
+  _current_pkg_name=$(jq -r '.name' "$_package_json")
+
+  echo "${_current_pkg_name##*/}"
+}
+check_package_refs() {
+
+  local _package_name=$1
+
+  for _dir in "$ROOT_DIR"/*/; do
+    # Remove trailing slash
+    _dir=${_dir%*/}
+    # Get just the folder name
+    dirname=${_dir##*/}
+    local _package_json="$_dir/package.json"
+    # Check if package.json exists
+    if [ ! -f "$_package_json" ]; then
+        continue
+    fi
+
+    current_pkg_name=$(jq -r '.name' "$_package_json")
+
+    deps=$(get_dependencies "$_package_name" "$_package_json")
+
+    if [ ! -z "$deps" ]; then
+        echo "$current_pkg_name"
+        break
+    fi
+
+  done
 }
 upgrade_recursive() {
-    local target_short_name=$1
-    echo "---------------------------------------------------------"
-    echo " Looking for local packages depending on: '$target_short_name'..."
-    # Iterate over all directories in the root folder
-    for dir in "$ROOT_DIR"/*/; do
+  local target_short_name=$1
+  echo "---------------------------------------------------------"
+  echo " Looking for local packages depending on: '$target_short_name'..."
+  # Iterate over all directories in the root folder
+  for dir in "$ROOT_DIR"/*/; do
     # Remove trailing slash
     dir=${dir%*/}
     # Get just the folder name
@@ -45,17 +123,14 @@ upgrade_recursive() {
     local package_json="$dir/package.json"
     # Check if package.json exists
     if [ ! -f "$package_json" ]; then
-    continue
+        continue
     fi
     # 1. Identify if this package depends on the target
     # We look for exact match OR match ending in /target_name (to handle @scope/name)
     # We extract the Full Key (e.g., @myorg/aaa) and the URL value
     echo "JQ # 444"
-    dependency_info=$(jq -r --arg target "$target_short_name" '
-    .dependencies // empty | to_entries[] |
-    select(.key == $target or (.key | tostring | endswith("/" + $target))) |
-    "\(.key)|\(.value)"
-    ' "$package_json")
+    dependency_info=$(get_dependencies "$target_short_name" "$package_json")
+
     # If dependency_info is not empty, we found a match
     if [ ! -z "$dependency_info" ]; then
     # Split the info into Name and URL
@@ -64,6 +139,9 @@ upgrade_recursive() {
     # Get the name of the CURRENT package (the one we are about to update)
     echo "JQ # 111"
     current_pkg_name=$(jq -r '.name' "$package_json")
+
+    continue_recursion=$(check_package_refs "$current_pkg_name")
+
     updated_packages_key="$full_dep_name|$current_pkg_name"
     # Check if we already processed this specific package to avoid loops
     if containsElement "$updated_packages_key" "${UPDATED_PACKAGES[@]}"; then
@@ -75,8 +153,8 @@ upgrade_recursive() {
     echo " -> Update Source: $dep_url"
     # 2. Perform the Upgrade
     # We use a subshell (parentheses) so directory changes don't affect the main loop
-    (
-    cd "$dir" || exit
+
+    pushd "$dir" > /dev/null || exit
 
     if [ ! -f "./.yarnrc.yml" ]; then
         yarn set version berry
@@ -118,17 +196,30 @@ upgrade_recursive() {
 
     fi
 
-    if [[ -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]; then
+    if [[ -z "${continue_recursion//[[:space:]]/}" ]]; then
 
-        echo "Do GIT PUSH @ ${dirname}"
+        POSTPONE_UPDATE+=("$dirname")
 
-        read -r -p "Press Enter to continue..."
+      if ! containsElement "$dirname" "${POSTPONED_UPDATE[@]}"; then
+        
+        POSTPONE_UPDATE+=("$dirname")
+
+      fi
+
     else
-        # # Mark as updated
-        UPDATED_PACKAGES+=($updated_packages_key)
+        if [[ -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]; then
+
+            echo "DEPS $dependency_info" 
+
+            wait_for_push "$dirname"
+
+        else
+            # # Mark as updated
+            UPDATED_PACKAGES+=("$updated_packages_key")
+        fi
     fi
 
-    )
+    popd > /dev/null;
 
     # # Mark as updated
     # UPDATED_PACKAGES+=("$current_pkg_name")
@@ -141,9 +232,18 @@ upgrade_recursive() {
     # RECURSIVE CALL
     upgrade_recursive "$next_target_short_name"
     fi
-    done
+  done
 }
 # Start the process
 upgrade_recursive "$TARGET_ARG"
+
+# echo "#### ${POSTPONE_UPDATE}"
+
+for dirname in "${POSTPONE_UPDATE[@]}"; do
+
+    wait_for_push "$dirname"
+
+done
+
 echo "---------------------------------------------------------"
 echo " Chain upgrade complete."
