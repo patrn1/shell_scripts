@@ -68,7 +68,7 @@ get_package_deps() {
     current_pkg_name=$(jq -r '.name' "$_package_json")
 
     if [ "$_package_name" == "$current_pkg_name" ]; then
-        echo $(get_dependencies "$target_short_name" "$_package_json")
+        get_dependencies "$target_short_name" "$_package_json"
         break
     fi
 
@@ -79,11 +79,11 @@ get_dependencies() {
   local _target_short_name=$1
   local _package_json=$2
 
-  echo $(jq -r --arg target "$_target_short_name" '
+  jq -r --arg target "$_target_short_name" '
   .dependencies // empty | to_entries[] |
   select(.key == $target or (.key | tostring | endswith("/" + $target))) |
   "\(.key)|\(.value)"
-  ' "$_package_json")
+  ' "$_package_json"
 }
 get_package_name() {
 
@@ -92,6 +92,12 @@ get_package_name() {
   _current_pkg_name=$(jq -r '.name' "$_package_json")
 
   echo "${_current_pkg_name##*/}"
+}
+del_yarn_package_setting() {
+  local _dirname=$1
+
+  (jq 'del(.packageManager)' "${_dirname}/package.json" > tmp.json) && mv -f tmp.json "${_dirname}/package.json"
+
 }
 check_package_refs() {
 
@@ -112,7 +118,7 @@ check_package_refs() {
 
     deps=$(get_dependencies "$_package_name" "$_package_json")
 
-    if [ ! -z "$deps" ]; then
+    if [ -n "$deps" ]; then
         echo "$current_pkg_name"
         break
     fi
@@ -143,6 +149,17 @@ upgrade_recursive() {
     if [ ! -f "$package_json" ]; then
         continue
     fi
+
+    ############################
+    ############################
+
+    rm .pnp.* &> /dev/null;
+
+    ############################ PACKAGE MANAGER
+    ############################
+
+    del_yarn_package_setting "$dir";
+
     # 1. Identify if this package depends on the target
     # We look for exact match OR match ending in /target_name (to handle @scope/name)
     # We extract the Full Key (e.g., @myorg/aaa) and the URL value
@@ -150,7 +167,7 @@ upgrade_recursive() {
     dependency_info=$(get_dependencies "$target_short_name" "$package_json")
 
     # If dependency_info is not empty, we found a match
-    if [ ! -z "$dependency_info" ]; then
+    if [ -n "$dependency_info" ]; then
     # Split the info into Name and URL
     full_dep_name=$(echo "$dependency_info" | cut -d'|' -f1)
     dep_url=$(echo "$dependency_info" | cut -d'|' -f2)
@@ -174,39 +191,100 @@ upgrade_recursive() {
 
     pushd "$dir" > /dev/null || exit
 
-    if [ ! -f "./.yarnrc.yml" ]; then
-        yarn set version berry
-        echo "nodeLinker: node-modules" > .yarnrc.yml
+    ############################ YARN 2
+    ############################
+    # if [ ! -f "./.yarnrc.yml" ]; then
+    #     yarn set version berry
+    #     echo "nodeLinker: node-modules" > .yarnrc.yml
+    # fi
+    ############################ 
+    ############################ 
+
+    ############################ YARN 1
+    ############################
+
+    if [ -f "./.yarnrc.yml" ]; then
+
+      rm -rf .yarn
+
+      rm .yarnrc.yml
+
+      # yarn set version 1.22.1
+
+      yarn install
+
     fi
 
-    echo " Executing yarn up in $dirname..."
+    ############################ 
+    ############################ 
+
+    if [ -f "./yarn.lock" ]; then
+
+      rm -rf .yarn
+
+      rm -rf yarn.lock
+
+      npm install
+
+    fi
 
     git restore --staged .
+
+    ############################ 
+    # YARN - UPDATE
+    ############################ 
+
+    ## echo " Executing yarn up in $dirname..."
 
     # Yarn 2 Up command
     ############ yarn up "${full_dep_name}@${dep_url}"
 
-    yarn_up_log="$(yarn up ${full_dep_name}@${dep_url})"
+    ## yarn_version=$(yarn --version)
 
-    echo "yarn_up_log" "$yarn_up_log"
+    ## if [[ $yarn_version == 1.* ]]; then
+    ##     # Yarn 1 (Classic) – use 'yarn add'
+    ##     yarn_up_log="$(yarn upgrade "${dep_url}")"
+    ## else
+    ##     # Yarn 2+ (Berry) – use 'yarn up'
+    ##     yarn_up_log="$(yarn up "${full_dep_name}@${dep_url}")"
+    ## fi
 
-    package_not_found="$(echo $yarn_up_log | grep 't seem to be present in your lockfile')"
+    ## echo "yarn_up_log" "$yarn_up_log"
 
-    if [ -n "$package_not_found" ]; then
+    ##package_not_found="$(echo $yarn_up_log | grep 't seem to be present in your lockfile')"
 
-        yarn install;
+    ##if [ -n "$package_not_found" ]; then
+    ##
+    ##    yarn install;
+    ##
+    ##fi 
 
-    fi 
+    ############################ 
+    # NPM - UPDATE
+    ############################
 
-    has_yarn_update="$(git status | grep yarn.lock)"
-    has_package_update="$(git status | grep package.json)"
+    echo " Executing npm update ${full_dep_name} in $dirname..."
+
+    npm_upd_log_errors=$(npm update "${full_dep_name}" 2>&1 | grep -i error)
+
+    if [ -n "$npm_upd_log_errors" ]; then
+      echo "$npm_upd_log_errors"
+      exit 1
+    fi
+
+    ############################ 
+    ############################ 
 
     git add ./.yarn
     git add ./yarn.lock
     git add ./package.json
     git add ./.yarnrc.yml
+    git add ./package-lock.json
 
-    branch_is_ahead="$(git commit -m UPG_${full_dep_name} 2>&1 | grep 'Your branch is ahead of' | tr -d '\n')"
+    ############################ 
+    ############################ 
+
+    git commit -m "UPG_${full_dep_name}" 2> /dev/null; 
 
     if [ -n "$git_configure_path" ]; then
 
@@ -215,12 +293,21 @@ upgrade_recursive() {
     fi
 
     has_any_updates() {
-        [[ -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]
+
+        has_npm_update="$(git status | grep package-lock.json)"
+        has_yarn_update="$(git status | grep yarn.lock)"
+        has_package_update="$(git status | grep package.json)"
+
+        branch_is_ahead="$(git status | grep 'Your branch is ahead of' | tr -d '\n')"
+
+        [[ -n "$has_npm_update" || -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]
     }
+
+    was_updated=$(has_any_updates)
 
     if [[ -z "${continue_recursion//[[:space:]]/}" ]]; then
 
-      if has_any_updates; then
+      if $was_updated; then
 
         if ! containsElement "$dirname" "${POSTPONE_UPDATE[@]}"; then
           
@@ -231,16 +318,25 @@ upgrade_recursive() {
       fi
 
     else
-        if has_any_updates; then
+        # if has_any_updates; then
+
+        #     echo "DEPS $dependency_info" 
+
+        #     wait_for_push "$dirname"
+
+        # # else
+        # #     # # Mark as updated
+        # #     UPDATED_PACKAGES+=("$updated_packages_key")
+        # fi
+
+        while has_any_updates
+        do
 
             echo "DEPS $dependency_info" 
 
             wait_for_push "$dirname"
 
-        # else
-        #     # # Mark as updated
-        #     UPDATED_PACKAGES+=("$updated_packages_key")
-        fi
+        done
     fi
 
     # if has_any_updates; then
@@ -262,7 +358,7 @@ upgrade_recursive() {
     # If current package is @vendor/abc, we pass 'abc' to the next recursion.
     # Remove scope (everything before and including /)
 
-    if has_any_updates; then
+    if $was_updated; then
 
       next_target_short_name="${current_pkg_name##*/}"
       echo " Propagating update downstream for '$next_target_short_name'..."
@@ -280,7 +376,7 @@ upgrade_recursive "$TARGET_ARG"
 
 for dirname in "${POSTPONE_UPDATE[@]}"; do
 
-    wait_for_push "$dirname"
+    wait_for_push "${dirname}"
 
 done
 
