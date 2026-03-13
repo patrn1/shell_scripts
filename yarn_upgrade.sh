@@ -303,11 +303,11 @@ upgrade_recursive() {
         [[ -n "$has_npm_update" || -n "$has_yarn_update" || -n "$has_package_update" || -n "$branch_is_ahead" ]]
     }
 
-    was_updated=$(has_any_updates)
+    # was_updated=$(has_any_updates)
 
     if [[ -z "${continue_recursion//[[:space:]]/}" ]]; then
 
-      if $was_updated; then
+      if has_any_updates; then
 
         if ! containsElement "$dirname" "${POSTPONE_UPDATE[@]}"; then
           
