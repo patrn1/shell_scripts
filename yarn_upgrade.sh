@@ -99,6 +99,21 @@ del_yarn_package_setting() {
   (jq 'del(.packageManager)' "${_dirname}/package.json" > tmp.json) && mv -f tmp.json "${_dirname}/package.json"
 
 }
+
+
+npm_update() {
+
+  local _package_name=$1
+
+  npm_upd_log_errors=$(npm update "${_package_name}" 2>&1 | grep -i error)
+
+  if [ -n "$npm_upd_log_errors" ]; then
+    echo "$npm_upd_log_errors"
+    exit 1
+  fi
+
+}
+
 check_package_refs() {
 
   local _package_name=$1
@@ -200,6 +215,11 @@ upgrade_recursive() {
     ############################ 
     ############################ 
 
+    git config --global --add safe.directory "$dir"
+
+    ############################ 
+    ############################ 
+
     ############################ YARN 1
     ############################
 
@@ -265,11 +285,12 @@ upgrade_recursive() {
 
     echo " Executing npm update ${full_dep_name} in $dirname..."
 
-    npm_upd_log_errors=$(npm update "${full_dep_name}" 2>&1 | grep -i error)
+    npm_update "${full_dep_name}"
 
-    if [ -n "$npm_upd_log_errors" ]; then
-      echo "$npm_upd_log_errors"
-      exit 1
+    if [[ "$full_dep_name" != "$TARGET_ARG" ]]; then
+
+        npm_update "${TARGET_ARG}"
+
     fi
 
     ############################ 
@@ -364,6 +385,8 @@ upgrade_recursive() {
       echo " Propagating update downstream for '$next_target_short_name'..."
       # RECURSIVE CALL
       upgrade_recursive "$next_target_short_name"
+
+      # npm update "$TARGET_ARG"
 
     fi
     fi
